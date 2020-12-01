@@ -1,0 +1,582 @@
+#include "mainwindow.h"
+#include "ui_mainwindow.h"
+#include "QTextEdit"
+using namespace std;
+MainWindow::MainWindow(QWidget *parent) :QMainWindow(parent),ui(new Ui::MainWindow)
+{
+
+    ///Конструктор занимается установкой базовых настроек, созданием объектов и линковкой сигналов и слотов
+    //первичная установка и запоминание настроек
+    ui->setupUi(this);
+    getSettings();
+    qDebug() << this->width();
+    qDebug() << this->height();
+
+    //белый цвет
+    QPalette Pal(palette());
+    Pal.setColor(QPalette::Background,Qt::white);
+    this->setPalette(Pal);
+
+    //перетаскивание
+    ui->tableView->viewport()->setAcceptDrops(true);
+    ui->tableView->setDragDropMode(QAbstractItemView::NoDragDrop);
+    ui->tableView->setSelectionMode(QTableWidget::SingleSelection);
+    ui->tableView->setSelectionBehavior(QTableWidget::SelectRows);
+    ui->tableView->setDropIndicatorShown(true);
+    this->setAcceptDrops(1);
+
+
+    menu = new QMenu(this);
+    QAction * editDevice = new QAction(tr("Edit"), this);
+    QAction * deleteDevice = new QAction(tr("Remove"), this);
+
+    connect(editDevice, SIGNAL(triggered()), this, SLOT(slotSendDataToRedact()));
+    connect(deleteDevice, SIGNAL(triggered()), this, SLOT(on_actionDelete_triggered()));
+
+    menu->addAction(editDevice);
+    menu->addAction(deleteDevice);
+
+
+    menu1 = new QMenu(this);
+    QAction * editHandbook = new QAction(tr("Edit"), this);
+    QAction * deleteHandbook = new QAction(tr("Remove"), this);
+
+    connect(editHandbook, SIGNAL(triggered()), this, SLOT(slotSendDataToRedactHandbook()));
+    connect(deleteHandbook, SIGNAL(triggered()), this, SLOT(deleteHandbook()));
+
+    menu1->addAction(editHandbook);
+    menu1->addAction(deleteHandbook);
+
+
+    if(currentLang == "ru")
+        ui->actionRussian->setChecked(true);
+    if(currentLang == "eng")
+        ui->actionEnglish->setChecked(true);
+
+
+    sp = new QLinkedList<Library>;
+    dataMap = new QMap<int, QString>;
+    ui->tableView->setSp(sp);
+
+    connect(ui->actionEdit,SIGNAL(triggered()),this,SLOT(slotSendDataToRedact()));
+    connect(ui->actionAdd,SIGNAL(triggered()),this,SLOT(slotAdd()));
+
+    TableUpdate();
+}
+
+MainWindow::~MainWindow()
+{
+    setSettings();
+    delete ui;
+}
+
+void MainWindow::TableUpdate()
+{
+    ///Перестраивает таблицу, формирует модель и ставит ее в соответствие tableview, так же линкует контекстное меню
+    ///и включает/выключает остальные элементы управления
+    QLinkedList<Library>::iterator iter;
+    QString sGest;
+    QStringList Header;
+    int count=0;
+    Header.push_back(tr("ID"));
+    Header.push_back(tr("UDK-ISBN"));
+    Header.push_back(tr("AUTHOR"));
+    Header.push_back(tr("YEAR"));
+    Header.push_back(tr("NAME"));
+
+    QStringList Header2;
+    Header2.push_back(tr("ID"));
+    Header2.push_back(tr("NAME"));
+
+    //Работа контекстного меню
+    ui->tableView->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->tableView,SIGNAL(customContextMenuRequested(QPoint)),this,SLOT(slotCustomMenuRequested(QPoint)));
+    connect(ui->tableView_2,SIGNAL(customContextMenuRequested(QPoint)),this,SLOT(slotCustomMenuRequested(QPoint)));
+    menu->actions().at(0)->setText(tr("Edit"));
+    menu->actions().at(1)->setText(tr("Delete"));
+
+
+
+    model = new QStandardItemModel();
+    QStandardItem *item;
+    model->setHorizontalHeaderLabels(Header);//применить заголовки к модели
+    for (iter=sp->begin();iter!=sp->end();iter++)//формирование модели
+    {
+        iter->setId(count);//задаем id
+        item = new QStandardItem();
+        item->setData(iter->getId(),Qt::DisplayRole);
+        model->setItem(count,0,item);
+        for (int i=0;i<iter->getData().size();i++)
+        {
+            item = new QStandardItem();
+            if (i == 1)
+                item->setData(iter->getData().at(i).toInt(),Qt::DisplayRole);
+            else
+                item->setText(iter->getData().at(i));
+            if (i == 1)
+                item->setText(dataMap->value(iter->getData().at(i).toInt()));
+            model->setItem(count,i+1,item);
+        }
+        count++;
+    }
+    ui->tableView->setModel(model);
+    ui->tableView->setColumnWidth(7,160);
+    ui->tableView->resizeRowsToContents();
+    ui->tableView->hideColumn(0);
+
+    if(sp->isEmpty() or dataMap->isEmpty())
+    {
+        bool flag = false;
+        ui->actionEdit->setEnabled(flag);
+        ui->actionDelete->setEnabled(flag);
+        ui->SearchButton->setEnabled(flag);
+        ui->lineEdit->setEnabled(flag);
+        ui->ResetButton->setEnabled(flag);
+        ui->actionSave->setEnabled(flag);
+        ui->actionNewWindow->setEnabled(flag);
+        ui->actionDiagram->setEnabled(flag);
+        ui->actionClose->setEnabled(flag);
+        ui->actionCloseFile->setEnabled(flag);
+        ui->actionShow->setEnabled(flag);
+    }
+    else {
+        bool flag = true;
+        ui->actionEdit->setEnabled(flag);
+        ui->actionDelete->setEnabled(flag);
+        ui->SearchButton->setEnabled(flag);
+        ui->lineEdit->setEnabled(flag);
+        ui->ResetButton->setEnabled(flag);
+        ui->actionSave->setEnabled(flag);
+        ui->actionNewWindow->setEnabled(flag);
+        ui->actionDiagram->setEnabled(flag);
+        ui->actionAdd_noteHandbook->setEnabled(flag);
+        ui->actionDelete_noteHandbook->setEnabled(flag);
+        ui->actionClose->setEnabled(flag);
+        ui->actionCloseFile->setEnabled(flag);
+        ui->actionShow->setEnabled(flag);
+    }
+
+
+
+
+
+    handbookModel = new QStandardItemModel();
+    handbookModel->setHorizontalHeaderLabels(Header2);
+    QStandardItem *item2;
+    QMapIterator<int,QString> i(*dataMap);
+    int iter1 = 0;
+    while (i.hasNext()) {
+        i.next();
+        item2 = new QStandardItem();
+        item2->setData(i.key(),Qt::DisplayRole);
+        handbookModel->setItem(iter1,0,item2);
+        handbookModel->setItem(iter1,1,new QStandardItem(i.value()));
+        iter1++;
+    }
+    handbookModel->setRowCount(dataMap->size());
+    ui->tableView_2->setModel(handbookModel);
+    ui->tableView_2->setContextMenuPolicy(Qt::CustomContextMenu);
+}
+
+//Основные функции
+
+void MainWindow::on_actionOpen_triggered()
+{
+    ///Отвечает за открытие файла, парсинг данных, формирование объектов, и заполнение ими двусвязного списка
+    QString filename;
+    QStringList slist;
+    QString sline;
+    filename = QFileDialog::getOpenFileName(this,tr("Open"));
+    QFile file(filename);
+    file.open( QIODevice::ReadOnly | QIODevice::Text );
+    if(file.readLine().contains("Library"))
+        while(!file.atEnd())
+        {
+            sline=file.readLine();
+            slist=sline.split(';');
+
+            Library *temp = new Library(
+                        slist.at(0).toInt(),
+                        slist.at(1),
+                        slist.at(2),
+                        slist.at(3)
+                        );
+            this->sp->push_back(*temp);
+            free(temp);
+        }
+    else if(!filename.isEmpty())
+    {
+        QMessageBox::critical(this,tr("Error"),tr("Wrong file"));
+        return;
+    }
+    TableUpdate();
+    ui->tabWidget->setCurrentIndex(0);
+}
+
+void MainWindow::on_actionSave_triggered()//сохранить файл
+{
+    ///Отвечает за сохранение данных в файл
+    QLinkedList<Library>::iterator iter;
+    QStringList slist;
+    QString filename;
+    filename = QFileDialog::getSaveFileName(this);
+    QFile file(filename);
+    QTextStream writeStream(&file);
+    file.open(QIODevice::WriteOnly | QIODevice::Text);
+    int i=0;
+    writeStream << "GardenPartnership\n";
+    for(iter=sp->begin();iter!=sp->end();iter++,i++)
+    {
+        for(int i=0; i< iter->getData().size();i++ )
+            writeStream << iter->getData().at(i) << ";";
+        if(iter!=sp->end())
+            writeStream<<"\n";
+    }
+    file.close();
+}
+
+void MainWindow::slotSendDataToRedact(bool add)//слот для отправки данных в EditWindow
+{
+    ///Слот отправки данных в форму редактирования
+    /// \param[in] add показывает, что происходит в момент вызова - добавление записи или ее редактирование
+    Library *obj = new Library();
+    QLinkedList<Library>::iterator iter;
+    edit = new EditNoteWindow(this);
+    connect(this,SIGNAL(sendDataToEdit(Library,bool,QList<int>)),edit,SLOT(recieveDataToRedact(Library,bool,QList<int>)));//connect сигнала отправки данных в edit
+    connect(edit,SIGNAL(sendDataFromEdit(Library,bool)),this,SLOT(slotRecieveData(Library,bool)));//connect сигнала получения данных из edit
+    for(iter=sp->begin();iter!=sp->end();iter++)
+        if(iter->getId()==ui->tableView->currentIndex().row())
+            obj = &(*iter);
+    QList<int> idList;
+    QMapIterator<int,QString> i(*dataMap);
+    while (i.hasNext()) {
+        i.next();
+        idList.append(i.key());
+    }
+
+
+
+    emit sendDataToEdit(*obj,add,idList);
+    edit->exec();
+}
+
+void MainWindow::slotRecieveData(Library temp,bool add)//слот для получения данных из EditWindow и замене этих данных в списке
+{
+    ///Слот получения данных из формы редактирования
+    /// \param[in] temp содержит данные, поступившие из формы в виде объекта
+    /// \param[in] add указывает, что нужно сделать с данными - добавить или удалить
+    QLinkedList<Library>::iterator iter;
+    if(add == true)
+        sp->push_back(temp);
+    else
+        for(iter=sp->begin();iter!=sp->end();iter++)
+            if(iter->getId()==ui->tableView->currentIndex().row())
+            {
+                iter->setData(temp);
+            }
+    TableUpdate();
+}
+
+void MainWindow::slotRecieveDataHandbook(int key, QString value, bool add)
+{
+    if(add == true)
+        dataMap->insert(key,value);
+    else {
+        QMapIterator<int,QString> i(*dataMap);
+        while (i.hasNext()) {
+            i.next();
+            if(i.key() == key) {
+                dataMap->remove(key);
+                dataMap->insert(key,value);
+            }
+        }
+
+    }
+    TableUpdate();
+}
+
+void MainWindow::slotSendDataToRedactHandbook(bool add)
+{
+
+    handbookEditWindow = new edithandbooknotes(this);
+    connect(this,SIGNAL(sendDataToEditHandbook(int, QString,bool)),handbookEditWindow,SLOT(recieveDataToRedact(int, QString,bool)));
+    connect(handbookEditWindow,SIGNAL(sendDataFromEdit(int, QString,bool)),this,SLOT(slotRecieveDataHandbook(int, QString,bool)));//connect сигнала получения данных из edit
+    QMapIterator<int,QString> i(*dataMap);
+    int Id = 0;
+    QString value;
+    while (i.hasNext()) {
+        i.next();
+        if(i.key() == handbookModel->item(ui->tableView_2->currentIndex().row(),0)->text().toInt()) {
+            Id = i.key();
+            value = i.value();
+            break;
+        }
+    }
+    emit sendDataToEditHandbook(Id,value,add);
+    handbookEditWindow->exec();
+}
+
+void MainWindow::on_actionDelete_triggered()//удаление
+{
+    ///Отвечает за удаление записи из двусвязного списка
+    QLinkedList<Library>::iterator iter;
+    for(iter=sp->begin();iter!=sp->end();iter++)
+        if(iter->getId()==model->item(ui->tableView->currentIndex().row(),0)->text().toInt())
+        {
+            sp->erase(iter);
+            break;
+        }
+    TableUpdate();
+
+}
+
+void MainWindow::deleteHandbook()
+{
+    int ind = 0;
+    ind = handbookModel->item(ui->tableView_2->currentIndex().row(),0)->text().toInt();
+    qDebug() << ind;
+    dataMap->remove(ind);
+    TableUpdate();
+
+}
+
+//работа переводчика
+
+void MainWindow::on_actionRussian_triggered()
+{
+    ///Установка русского языка
+    currentLang="ru";
+    translator.load(QString(":/Translations/Course_ru.qm"));
+    qApp->installTranslator(&translator);
+    ui->retranslateUi(this);
+    ui->actionFrench->setChecked(false);
+    ui->actionEnglish->setChecked(false);
+    ui->lineEdit->setText("");
+    ui->tableView->clearSpans();
+    TableUpdate();
+}
+
+void MainWindow::on_actionEnglish_triggered()
+{
+    ///Установка английского языка
+    currentLang="eng";
+    translator.load(QString(":/Translations/Course_eng.ts"));
+    qApp->installTranslator(&translator);
+    ui->retranslateUi(this);
+    ui->actionRussian->setChecked(false);
+    ui->actionFrench->setChecked(false);
+    ui->lineEdit->setText("");
+    ui->tableView->clearSpans();
+    TableUpdate();
+}
+
+
+//работа Drag and Drop
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *e) //событие входа drag в окно
+{
+    ///Разрешает или запрещает перетаскивание в зависимости от того, есть ли в мышке данные
+    if(e->mimeData()->hasText())
+        e->setAccepted(true);
+    else
+        e->setAccepted(false);
+}
+
+void MainWindow::dragLeaveEvent(QDragLeaveEvent *e)//событие выхода drag из окна
+{
+    ///Разрешает выход drag из окна
+    e->setAccepted(true);
+}
+
+void MainWindow::dropEvent(QDropEvent *e)
+{
+    ///Событие отпускания кнопки мыши, отвечает за взятие данных из события drag и их отправку в двусвязный список
+    QStringList slist;
+    QString line;
+    line = e->mimeData()->data("data");
+    slist = line.split(';');
+    if(slist.isEmpty())
+        return;
+    Library *temp = new Library(
+                slist.at(0).toInt(),
+                slist.at(1),
+                slist.at(2),
+                slist.at(3)
+                );
+    temp->setId(this->sp->size());
+    this->sp->push_back(*temp);
+    TableUpdate();
+
+}
+
+
+//работа сохранения/восстановления настроек
+
+void MainWindow::setSettings()
+{
+    ///Сохранение настроек окна в реестр при закрытии приложения
+    QSettings settings("Annd    ","App");
+    settings.beginGroup("w");
+    settings.setValue("language",currentLang);  //сохраняется язык под ключом language
+    settings.setValue("geometry", saveGeometry()); // сохраняется геометрия окна под ключом "geometry"
+    //settings.setValue("position",this->pos());
+    settings.endGroup();
+}
+
+void MainWindow::getSettings()
+{
+    ///Восстановление настроек интерфейса при открытии приложения
+    QString lang;
+    QSettings settings("Annd","App");
+    settings.beginGroup( "w" );
+    lang = settings.value("language").toString();//грузится язык под ключом language и сразу врубается переводчик
+    translator.load(QString(lang));
+    qApp->installTranslator(&translator);
+    ui->retranslateUi(this);
+    restoreGeometry(settings.value( "geometry", saveGeometry() ).toByteArray()); // восстанавление настроек геометрии окна по ключу "geometry"
+    settings.endGroup();
+}
+
+
+//слоты для работы меню, вызова окон итд...
+
+void MainWindow::slotCustomMenuRequested(QPoint pos)//контекстное меню
+{
+    ///Слот вызова кастомного контекстного меню
+    if(ui->tabWidget->currentIndex() == 0) {
+
+        int row = ui->tableView->selectionModel()->currentIndex().row();
+        if(ui->tableView->indexAt(pos).row() == row)
+            if(!sp->isEmpty())
+                if(row >=0)
+                    menu->popup(ui->tableView->viewport()->mapToGlobal(pos));
+    } else {
+        int row = ui->tableView_2->selectionModel()->currentIndex().row();
+        if(ui->tableView_2->indexAt(pos).row() == row)
+            if(!dataMap->isEmpty())
+                if(row >=0)
+                    menu1->popup(ui->tableView_2->viewport()->mapToGlobal(pos));
+    }
+
+
+}
+
+
+
+void MainWindow::on_actionAbout_triggered()//о программе
+{
+    ///Вызов окна "О программе"
+    QMessageBox::about(this,tr("About"),"Программа разработана Денисовым Андреем Алексеевичем .\nИКГ: ИЭУИС II-2.\nВариант: 5.");
+}
+
+void MainWindow::on_SearchButton_clicked()//поиск
+{
+    ///Поиск данных и выделение их цветом
+    QBrush brush(QColor(40,230,255));
+    QString *str = new QString(ui->lineEdit->text());
+    if(ui->tabWidget->currentIndex() == 0) {
+        for (int i=0;i<model->rowCount();i++)
+            for(int j=0;j<model->columnCount();j++)
+            {
+                QModelIndex index = model->index(i,j);
+                if(index.data(Qt::DisplayRole).toString()==str)
+                    model->item(i,j)->setBackground(brush);
+            }
+        ui->tableView->setModel(model);
+    } else {
+        for (int i=0;i<handbookModel->rowCount();i++)
+            for(int j=0;j<handbookModel->columnCount();j++)
+            {
+                QModelIndex index = handbookModel->index(i,j);
+                if(index.data(Qt::DisplayRole).toString()==str)
+                    handbookModel->item(i,j)->setBackground(brush);
+            }
+        ui->tableView_2->setModel(handbookModel);
+    }
+}
+
+void MainWindow::on_ResetButton_clicked()//сброс
+{
+    ///Перестройка таблицы, служит для очисти данных от поиска или сброса подбора
+    ui->lineEdit->setText("");
+    ui->tableView->clearSpans();
+    TableUpdate();
+}
+
+
+void MainWindow::slotAdd()//добавить запись
+{
+    ///Вызывает слот отправки данных в форму редактирования с флагом true
+    slotSendDataToRedact(true);
+}
+
+
+void MainWindow::on_actionNewWindow_triggered()
+{
+    ///Создает новую копию этого же окна, таким образом позволяет открывать более 1 файла
+    MainWindow *mainwindow = new MainWindow(this);
+    mainwindow->setAttribute(Qt::WA_DeleteOnClose);
+    mainwindow->show();
+}
+
+
+void MainWindow::on_actionOpenHandbook_triggered()
+{
+    QString filename;
+    QStringList slist;
+    QString sline;
+    filename = QFileDialog::getOpenFileName(this,tr("Open"));
+    QFile file(filename);
+    file.open( QIODevice::ReadOnly | QIODevice::Text );
+    if(file.readLine().contains("Library"))
+        while(!file.atEnd())
+        {
+            sline=file.readLine();
+            slist=sline.split(';');
+            dataMap->insert(slist[0].toInt(),slist[1].left(slist[1].size()-1));
+            qDebug() << dataMap;
+        }
+    else if(!filename.isEmpty())
+    {
+        QMessageBox::critical(this,tr("Error"),tr("Wrong file"));
+        return;
+    }
+    QMapIterator<int,QString> i(*dataMap);
+    while (i.hasNext()) {
+        i.next();
+        qDebug() << i.key() << ": " << i.value();
+    }
+    TableUpdate();
+    ui->tabWidget->setCurrentIndex(1);
+}
+
+void MainWindow::on_actionAddNote_triggered()
+{
+    slotSendDataToRedactHandbook(true);
+}
+
+
+
+void MainWindow::on_actionDiagram_triggered()
+{
+    diagram = new diagramWindow(this,sp,dataMap);
+    diagram->setAttribute(Qt::WA_DeleteOnClose);
+    diagram->exec();
+}
+
+void MainWindow::on_actionCloseFile_triggered()
+{
+    sp->clear();
+    TableUpdate();
+}
+
+void MainWindow::on_actionClose_triggered()
+{
+    dataMap->clear();
+    TableUpdate();
+}
+
+void MainWindow::on_actionShow_triggered()
+{
+    ui->tabWidget->setCurrentIndex(1);
+}
